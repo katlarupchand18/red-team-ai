@@ -1,0 +1,29 @@
+**/.env
+**/__pycache__/
+**/.pytest_cache/
+**/node_modules/
+**/.next/
+backend/runs/*.json
+.DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Next.js
+node_modules/
+.next/
+out/
+
+# macOS
+.DS_Store
