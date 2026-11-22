@@ -1,4 +1,4 @@
-from app.core import ATTACKS, APIError, call_model, judge, improved_prompt, calculate_metrics, calculate_version_metrics, ComparisonMetrics, VersionMetrics
+from app.core import ATTACKS, APIError, call_model, judge, improved_prompt, advanced_prompt, calculate_metrics, calculate_version_metrics, ComparisonMetrics, VersionMetrics
 import pytest
 import httpx
 import os
@@ -6,10 +6,12 @@ import csv
 import io
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+from app import main as main_module
 
 
 def test_attack_ids_unique():
     assert len({a.id for a in ATTACKS}) == len(ATTACKS)
+    assert len(ATTACKS) == 10
 
 
 def test_exact_marker_is_failure():
@@ -26,6 +28,30 @@ def test_empty_response_requires_review():
 
 def test_prompt_refinement_preserves_original():
     assert improved_prompt("You are a tutor.").startswith("You are a tutor.")
+
+
+def test_advanced_prompt_includes_indirect_injection_and_benign_guidance():
+    prompt = advanced_prompt("You are a tutor.")
+    assert prompt.startswith("You are a tutor.")
+    assert "quoted strings" in prompt
+    assert "base64 or hex" in prompt
+    assert "BENIGN ASSISTANCE" in prompt
+
+
+@pytest.mark.asyncio
+async def test_test_endpoint_evaluates_all_three_prompt_versions():
+    request = main_module.TestRequest(
+        system_prompt="You are a helpful university tutor.",
+        provider="gemini",
+        attack_ids=["override_01"],
+    )
+    with patch("app.main.call_model", new=AsyncMock(return_value="I cannot follow that instruction.")), patch("app.main.save_run"):
+        payload = await main_module.test(request)
+
+    assert list(payload["prompts"]) == ["baseline", "improved", "advanced"]
+    assert len(payload["results"]) == 3
+    assert {row["version"] for row in payload["results"]} == {"baseline", "improved", "advanced"}
+    assert payload["metrics"]["advanced"]["total_evaluations"] == 1
 
 
 # ===== Verdict Classification Tests (New Logic) =====
@@ -907,6 +933,24 @@ def test_calculate_metrics_baseline_vs_improved():
     # Differences: ASR improved by -33.33pp, Defense improved by +33.33pp
     assert abs(metrics.asr_difference_pp - (-33.33)) < 0.1
     assert abs(metrics.defense_difference_pp - 33.33) < 0.1
+
+
+def test_calculate_metrics_includes_advanced_version_and_three_way_verdicts():
+    results = [
+        make_result("baseline", "override_01", "FAIL", category="instruction_override"),
+        make_result("improved", "override_01", "NEEDS REVIEW", category="instruction_override"),
+        make_result("advanced", "override_01", "PASS", category="instruction_override"),
+    ]
+    metrics = calculate_metrics(results)
+
+    assert metrics.advanced.total_evaluations == 1
+    assert metrics.advanced.adversarial_pass_count == 1
+    assert metrics.advanced.defense_success_rate == 100.0
+    assert metrics.advanced_asr_difference_pp is None  # V2 has only NEEDS REVIEW, excluded from rates.
+    attack = metrics.per_attack[0]
+    assert (attack.baseline_verdict, attack.improved_verdict, attack.advanced_verdict) == (
+        "FAIL", "NEEDS REVIEW", "PASS"
+    )
 
 
 def test_calculate_metrics_per_attack():
