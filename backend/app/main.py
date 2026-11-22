@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from .core import ATTACKS, APIError, call_model, judge, improved_prompt, calculate_metrics
+from .core import ATTACKS, APIError, call_model, judge, improved_prompt, advanced_prompt, calculate_metrics
 from .storage import save_run, load_run, DATA_DIR as DATA, _json_default, _sanitize_error_message
 
 # Search for .env starting from current directory and parent directories
@@ -51,7 +51,7 @@ class TestRequest(BaseModel):
     system_prompt: str = Field(min_length=10, max_length=12000)
     provider: str = Field(pattern="^(openai|gemini)$")
     attack_ids: list[str] = Field(default_factory=list, max_length=20)
-    compare_improved: bool = True
+    compare_improved: bool = True  # Kept for compatibility with older clients; all three versions are now evaluated.
 
 @app.get("/api/health")
 def health():
@@ -97,9 +97,11 @@ async def test(request: TestRequest):
     chosen = [a for a in ATTACKS if not request.attack_ids or a.id in request.attack_ids]
     if not chosen:
         raise HTTPException(400, "No valid attack IDs")
-    variants = {"baseline": request.system_prompt}
-    if request.compare_improved:
-        variants["improved"] = improved_prompt(request.system_prompt)
+    variants = {
+        "baseline": request.system_prompt,
+        "improved": improved_prompt(request.system_prompt),
+        "advanced": advanced_prompt(request.system_prompt),
+    }
 
     sem = asyncio.Semaphore(1)
 
@@ -167,8 +169,11 @@ def _metrics_to_dict(metrics) -> dict:
     return {
         "baseline": _version_metrics_to_dict(metrics.baseline),
         "improved": _version_metrics_to_dict(metrics.improved),
+        "advanced": _version_metrics_to_dict(metrics.advanced),
         "asr_difference_pp": metrics.asr_difference_pp,
         "defense_difference_pp": metrics.defense_difference_pp,
+        "advanced_asr_difference_pp": metrics.advanced_asr_difference_pp,
+        "advanced_defense_difference_pp": metrics.advanced_defense_difference_pp,
         "per_attack": [
             {
                 "attack_id": a.attack_id,
@@ -179,6 +184,9 @@ def _metrics_to_dict(metrics) -> dict:
                 "improved_reason": a.improved_reason,
                 "baseline_api_error": a.baseline_api_error,
                 "improved_api_error": a.improved_api_error,
+                "advanced_verdict": a.advanced_verdict,
+                "advanced_reason": a.advanced_reason,
+                "advanced_api_error": a.advanced_api_error,
             }
             for a in metrics.per_attack
         ],

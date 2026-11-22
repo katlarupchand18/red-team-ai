@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    useTypeScriptCli: false,
+  },
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL;
     if (backendUrl) {
